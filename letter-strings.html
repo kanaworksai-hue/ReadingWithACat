@@ -185,7 +185,6 @@
     </div>
   </div>
 
-<script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"></script>
 <script>
 (() => {
   const canvas = document.getElementById('curtain');
@@ -344,8 +343,35 @@
     if (points.length) assignChars();
   }
 
-  // 辞書を読み込み（失敗・オフラインでもフォールバックで動作）
-  if (window.kuromoji) {
+  function loadKuromojiScript() {
+    if (window.kuromoji) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js';
+      s.async = true;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  function buildTokenizer() {
+    return new Promise((resolve, reject) => {
+      if (!window.kuromoji) { reject(new Error('kuromoji unavailable')); return; }
+      try {
+        kuromoji.builder({ dicPath: 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/' })
+          .build((err, tk) => {
+            if (err || !tk) reject(err || new Error('dictionary unavailable'));
+            else resolve(tk);
+          });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  // 辞書を背景で読み込み（失敗・オフラインでもフォールバックで動作）
+  function initDictionary() {
     setDictStatus('辞書を読込中…');
     let dictLoaded = false;
     const fallbackToApprox = txt => {
@@ -357,23 +383,21 @@
     const dictTimer = setTimeout(() => {
       fallbackToApprox('近似読み（辞書待機中）');
     }, 3000);
-    try {
-      kuromoji.builder({ dicPath: 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/' })
-        .build((err, tk) => {
-          clearTimeout(dictTimer);
-          if (err || !tk) { fallbackToApprox('辞書読込失敗・近似読み'); return; }
-          tokenizer = tk;
-          dictLoaded = true;
-          refreshTextModel();
-          setDictStatus('辞書✓ 文脈で発音', true);
-        });
-    } catch (e) {
-      clearTimeout(dictTimer);
-      fallbackToApprox('近似読み');
-    }
-  } else {
-    setDictStatus('近似読み（辞書なし）', true);
+    loadKuromojiScript()
+      .then(buildTokenizer)
+      .then(tk => {
+        clearTimeout(dictTimer);
+        tokenizer = tk;
+        dictLoaded = true;
+        refreshTextModel();
+        setDictStatus('辞書✓ 文脈で発音', true);
+      })
+      .catch(() => {
+        clearTimeout(dictTimer);
+        fallbackToApprox('辞書読込失敗・近似読み');
+      });
   }
+  initDictionary();
 
   function build() {
     const rect = canvas.getBoundingClientRect();
