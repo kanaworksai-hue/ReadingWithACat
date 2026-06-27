@@ -261,7 +261,7 @@
   }
   const isLetter = ch => /[぀-ヿ一-鿿]/.test(ch);
   const pronOf = ch => readingOf(ch) || ch;
-  let queuedTouchSpeech = null;
+  let queuedSpeech = null;
   let lastSpeechAt = 0;
   function clearPageSelection() {
     const sel = window.getSelection && window.getSelection();
@@ -301,18 +301,17 @@
     } catch (e) {}
   }
   function requestSpeech(ch, text, type) {
-    queuedTouchSpeech = { ch, text };
+    queuedSpeech = { ch, text, type };
     wakeSpeech();
-    if (type !== 'touch') {
-      speak(ch, text);
-      queuedTouchSpeech = null;
-    }
   }
-  function flushTouchSpeech() {
-    if (!queuedTouchSpeech) return;
-    const item = queuedTouchSpeech;
-    queuedTouchSpeech = null;
+  function flushSpeech() {
+    if (!queuedSpeech) return;
+    const item = queuedSpeech;
+    queuedSpeech = null;
     if (performance.now() - lastSpeechAt > 120) speak(item.ch, item.text);
+  }
+  function cancelQueuedSpeech() {
+    queuedSpeech = null;
   }
 
   // ―― kuromoji 形態素解析：任意の文章を文脈どおりに読む ――
@@ -580,7 +579,7 @@ try {
     // 最寄りの珠をつかむ
     let best = null, bd = grabR2;
     for (const pt of points) {
-      if (pt.pinned) continue;
+      if (pt.pinned || !isLetter(pt.ch)) continue;
       const d2 = (pt.x - p.x) ** 2 + (pt.y - p.y) ** 2;
       if (d2 < bd) { bd = d2; best = pt; }
     }
@@ -603,13 +602,15 @@ try {
     e.preventDefault();
     hideHint();
   });
-  function release() {
+  function release(shouldSpeak = true) {
     if (pointer.wordBeads) for (const b of pointer.wordBeads) b.grabbed = false;
-    if (pointer.type === 'touch') flushTouchSpeech();
+    if (shouldSpeak) flushSpeech();
+    else cancelQueuedSpeech();
     pointer.down = false; pointer.grab = null; pointer.wordBeads = null;
   }
-  window.addEventListener('pointerup', release);
-  window.addEventListener('pointercancel', release);
+  window.addEventListener('pointerup', () => release(true));
+  window.addEventListener('pointercancel', () => release(false));
+  canvas.addEventListener('click', flushSpeech);
   canvas.addEventListener('touchstart', clearPageSelection, { passive: true });
   canvas.addEventListener('touchend', clearPageSelection, { passive: true });
   document.addEventListener('selectionchange', () => {
@@ -640,7 +641,7 @@ try {
       if (cap) cap.textContent = t ? '「' + t.slice(0, 8) + (t.length > 8 ? '…' : '') + '」' : '「　」';
     }, 220);
   });
-  input.addEventListener('focus', () => { pointer.inside = false; release(); });
+  input.addEventListener('focus', () => { pointer.inside = false; release(false); });
 
   // ―― 物理更新 ――
   function update() {
