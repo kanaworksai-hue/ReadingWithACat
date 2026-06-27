@@ -127,7 +127,15 @@
   }
   .dot{width:10px;height:10px;border-radius:50%;}
   .dot.r{background:#ff5f57;}.dot.y{background:#febc2e;}.dot.g{background:#28c840;}
-  .panel .file{margin-left:8px;font-family:"JetBrains Mono",monospace;font-size:11px;color:#9aa3b2;}
+  .panel .file{margin-left:8px;font-family:"JetBrains Mono",monospace;font-size:11px;color:#9aa3b2;white-space:nowrap;}
+  .panel .bar .file:first-of-type{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+  #dictStatus{flex:0 0 auto;}
+  .sound-btn{
+    appearance:none;border:1px solid rgba(255,255,255,.16);border-radius:7px;background:rgba(255,255,255,.06);
+    color:#cfd6e3;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;line-height:1;
+    flex:0 0 auto;min-height:27px;padding:0 9px;cursor:var(--paw), pointer;white-space:nowrap;
+  }
+  .sound-btn.on{background:#9a4b3b;border-color:#b96555;color:#fff2ea;}
   #srcInput{
     width:100%;min-height:74px;resize:vertical;border:0;outline:none;background:transparent;
     color:#dfe3ea;font-family:"Noto Serif JP",serif;font-size:16px;line-height:1.7;padding:11px 15px 13px;display:block;
@@ -186,6 +194,7 @@
       <div class="bar">
         <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
         <span class="file">✎ 文字を入力すると珠が変わります</span>
+        <button class="sound-btn" id="soundBtn" type="button" aria-pressed="false">音声 OFF</button>
         <span class="file" id="dictStatus" style="margin-left:auto"></span>
       </div>
       <textarea id="srcInput" spellcheck="false" placeholder="好きな文章や言葉を入力…">吾輩は猫である。名前はまだ無い。どこで生れたかとんと見当がつかぬ。何でも薄暗いじめじめした所でニャーニャー泣いていた事だけは記憶している。吾輩はここで始めて人間というものを見た。</textarea>
@@ -197,6 +206,7 @@
   const canvas = document.getElementById('curtain');
   const ctx = canvas.getContext('2d');
   const input = document.getElementById('srcInput');
+  const soundBtn = document.getElementById('soundBtn');
 
   // ―― 物理パラメータ ――
   const GRAVITY  = 0.40;
@@ -261,6 +271,7 @@
   }
   const isLetter = ch => /[぀-ヿ一-鿿]/.test(ch);
   const pronOf = ch => readingOf(ch) || ch;
+  let soundEnabled = false;
   let queuedSpeech = null;
   let lastSpeechAt = 0;
   function clearPageSelection() {
@@ -285,9 +296,15 @@
       return false;
     }
   }
-  function speak(ch, text) {
-    if (!('speechSynthesis' in window) || !isLetter(ch)) return;
-    const say = (text && text.length) ? text : pronOf(ch);
+  function setSoundEnabled(on) {
+    soundEnabled = on;
+    if (!soundBtn) return;
+    soundBtn.textContent = on ? '音声 ON' : '音声 OFF';
+    soundBtn.classList.toggle('on', on);
+    soundBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  function speakText(say, force = false) {
+    if (!('speechSynthesis' in window) || (!soundEnabled && !force) || !say) return;
     try {
       wakeSpeech();
       speechSynthesis.cancel();
@@ -300,9 +317,24 @@
       lastSpeechAt = performance.now();
     } catch (e) {}
   }
+  function enableSound() {
+    setSoundEnabled(true);
+    speakText('オン', true);
+  }
+  if (soundBtn) {
+    soundBtn.addEventListener('click', e => {
+      e.preventDefault();
+      enableSound();
+    });
+  }
+  function speak(ch, text) {
+    if (!isLetter(ch)) return;
+    speakText((text && text.length) ? text : pronOf(ch));
+  }
   function requestSpeech(ch, text, type) {
     queuedSpeech = { ch, text, type };
     wakeSpeech();
+    if (soundEnabled) flushSpeech();
   }
   function flushSpeech() {
     if (!queuedSpeech) return;
