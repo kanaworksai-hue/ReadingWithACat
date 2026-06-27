@@ -338,19 +338,39 @@
     const el = document.getElementById('dictStatus');
     if (el) { el.textContent = txt; el.style.opacity = done ? '0.5' : '1'; }
   }
+
+  function refreshTextModel() {
+    buildReadingArrays();
+    if (points.length) assignChars();
+  }
+
   // 辞書を読み込み（失敗・オフラインでもフォールバックで動作）
   if (window.kuromoji) {
     setDictStatus('辞書を読込中…');
+    let dictLoaded = false;
+    const fallbackToApprox = txt => {
+      if (dictLoaded) return;
+      tokenizer = null;
+      refreshTextModel();
+      setDictStatus(txt, true);
+    };
+    const dictTimer = setTimeout(() => {
+      fallbackToApprox('近似読み（辞書待機中）');
+    }, 3000);
     try {
       kuromoji.builder({ dicPath: 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/' })
         .build((err, tk) => {
-          if (err || !tk) { setDictStatus('辞書読込失敗・近似読み', true); return; }
+          clearTimeout(dictTimer);
+          if (err || !tk) { fallbackToApprox('辞書読込失敗・近似読み'); return; }
           tokenizer = tk;
-          buildReadingArrays();
-          assignChars();
+          dictLoaded = true;
+          refreshTextModel();
           setDictStatus('辞書✓ 文脈で発音', true);
         });
-    } catch (e) { setDictStatus('近似読み', true); }
+    } catch (e) {
+      clearTimeout(dictTimer);
+      fallbackToApprox('近似読み');
+    }
   } else {
     setDictStatus('近似読み（辞書なし）', true);
   }
