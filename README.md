@@ -1,26 +1,37 @@
 # 猫と本を読む — Reading with a Cat
 
-An interactive, vertical Japanese "bead curtain" made of text. Grab a word to pull that strand of beads; let go and it springs back. Whenever you grab a word, a vertical paper card pops up with the word, its furigana, and a cat lounging on the bottom edge — and the word is read aloud.
+自分の日本語テキストを入力、または貼り付けるだけで、文章をインタラクティブな縦書きの「文字のすだれ」へと変換できるWebページです。
 
 **Live demo:** https://kanaworksai-hue.github.io/ReadingWithACat/
 
-## Features
+## 概要
 
-- **Text bead curtain** — characters hang as independent vertical strands using Verlet physics. No wind: it rests perfectly still until you touch it.
-- **Grab a word, not just a character** — grabbing any bead selects the whole word it belongs to; the strand swings and springs back together.
-- **Contextual readings** — [kuromoji.js](https://github.com/takuyaa/kuromoji.js) tokenizes any text so the same kanji is read correctly in different words (e.g. 見当 = けん / 見た = み).
-- **Natural speech** — the selected word is spoken with the Web Speech API using its pronunciation, not a robotic per-character readout.
-- **Editable** — type any text in the box and the curtain (and its readings) update live.
-- **A reading companion** — a cat rests on each card, its tail swaying, occasionally opening its eyes.
-- **Mobile friendly** — touch to part the beads and tap a word to hear it.
+ユーザーは自分の日本語テキストを入力、または貼り付けるだけで、文章をインタラクティブな縦書きの「文字のすだれ」へと変換できます。
 
-## Usage
+マウスや指で文字を押さえると、文字がやさしく揺れ、風に吹かれた本のページのような心地よい読書体験を楽しめます。
 
-Open `index.html` in a modern browser (Chrome, Edge, Firefox, Safari), or visit the live demo link above. An internet connection is used once to load the kuromoji dictionary; while it loads (or offline) the app falls back to approximate readings.
+さらに、音声ボタンをオンにすると、文字を押さえた際に対応する日本語の発音を聞くことができます。
 
-## Tech
+猫、本、縦書き、そして音声読み上げを組み合わせることで、日本語を読む時間を、静かで心地よく、少し楽しい体験へと変えることを目指したプロジェクトです。
 
-HTML5 Canvas · Verlet integration · kuromoji.js (morphological analysis) · Web Speech API. Everything is in a single self-contained `index.html`.
+※初回起動時は読み込みに少し時間がかかるため、そのまましばらくお待ちください。
+
+## 機能
+
+- **文字のすだれ** — 文字が縦方向の独立した糸のように並び、触れると物理的に揺れます。
+- **自分の文章を入力** — テキストボックスに日本語を入力、または貼り付けると、表示される文字のすだれが更新されます。
+- **単語単位の読み取り** — [kuromoji.js](https://github.com/takuyaa/kuromoji.js) を使い、文脈に応じた読みを取得します。
+- **音声読み上げ** — 音声ボタンをオンにしたあと、文字を押さえると対応する日本語の発音を聞けます。
+- **猫と本の世界観** — 猫、本、縦書き文字を組み合わせた、静かな読書体験を目指しています。
+- **スマートフォン対応** — スマートフォンでも文字を押さえて揺らし、音声を聞くことができます。
+
+## 使い方
+
+公開ページを開き、画面下の入力欄に好きな日本語テキストを入力、または貼り付けてください。音声を使う場合は、`音声 OFF` ボタンを押して `音声 ON` にしてから、本文の文字を押さえてください。
+
+## 技術
+
+HTML5 Canvas · Verlet integration · kuromoji.js · Web Speech API. すべて `index.html` だけで動作する静的Webページです。
 
 ## Credits
 
