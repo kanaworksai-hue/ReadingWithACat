@@ -20,7 +20,10 @@
     --paw:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzOCIgaGVpZ2h0PSIzOCIgdmlld0JveD0iMCAwIDM4IDM4Ij48ZyBmaWxsPSIjMmYyMzIwIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMS4zIj48ZWxsaXBzZSBjeD0iMTkiIGN5PSIyNS41IiByeD0iOC44IiByeT0iNy40Ii8+PGVsbGlwc2UgY3g9IjkuNSIgY3k9IjE3IiByeD0iMy4yIiByeT0iNC4yIi8+PGVsbGlwc2UgY3g9IjE2IiBjeT0iMTEuNSIgcng9IjMuMiIgcnk9IjQuNSIvPjxlbGxpcHNlIGN4PSIyMi41IiBjeT0iMTEuNSIgcng9IjMuMiIgcnk9IjQuNSIvPjxlbGxpcHNlIGN4PSIyOSIgY3k9IjE3IiByeD0iMy4yIiByeT0iNC4yIi8+PC9nPjwvc3ZnPgo=") 19 22;
     --paw-grab:url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzNiIgaGVpZ2h0PSIzNiIgdmlld0JveD0iMCAwIDM4IDM4Ij48ZyBmaWxsPSIjOWE0YjNiIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMS4zIj48ZWxsaXBzZSBjeD0iMTkiIGN5PSIyNCIgcng9IjguNCIgcnk9IjcuMiIvPjxlbGxpcHNlIGN4PSIxMC41IiBjeT0iMTYuNSIgcng9IjMuMSIgcnk9IjQiLz48ZWxsaXBzZSBjeD0iMTYuMyIgY3k9IjEyIiByeD0iMy4xIiByeT0iNC4zIi8+PGVsbGlwc2UgY3g9IjIxLjciIGN5PSIxMiIgcng9IjMuMSIgcnk9IjQuMyIvPjxlbGxpcHNlIGN4PSIyNy41IiBjeT0iMTYuNSIgcng9IjMuMSIgcnk9IjQiLz48L2c+PC9zdmc+Cg==") 18 20;
   }
-  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  *{
+    box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  }
   html,body{height:100%;-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:none;}
   body{
     background:radial-gradient(120% 80% at 50% 0%, #faf7f0 0%, var(--paper) 45%, var(--paper2) 100%);
@@ -82,7 +85,10 @@
     min-height:56vh;
     display:flex;
   }
-  canvas{ width:100%; height:100%; display:block; touch-action:none; cursor:var(--paw), grab; }
+  canvas{
+    width:100%; height:100%; display:block; touch-action:none; cursor:var(--paw), grab;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+  }
   canvas:active{ cursor:var(--paw-grab), grabbing; }
   .hint{
     position:absolute;
@@ -126,6 +132,7 @@
     width:100%;min-height:74px;resize:vertical;border:0;outline:none;background:transparent;
     color:#dfe3ea;font-family:"Noto Serif JP",serif;font-size:16px;line-height:1.7;padding:11px 15px 13px;display:block;
     cursor:text;
+    -webkit-user-select:text;user-select:text;-webkit-touch-callout:default;
   }
   #srcInput::placeholder{color:#5d6273;}
 </style>
@@ -254,16 +261,58 @@
   }
   const isLetter = ch => /[぀-ヿ一-鿿]/.test(ch);
   const pronOf = ch => readingOf(ch) || ch;
+  let queuedTouchSpeech = null;
+  let lastSpeechAt = 0;
+  function clearPageSelection() {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && sel.rangeCount) sel.removeAllRanges();
+  }
+  function leaveTextInput() {
+    if (document.activeElement !== input) return;
+    try {
+      const pos = input.selectionEnd || input.value.length;
+      input.setSelectionRange(pos, pos);
+      input.blur();
+    } catch (e) {}
+  }
+  function wakeSpeech() {
+    if (!('speechSynthesis' in window)) return false;
+    try {
+      pickVoice();
+      speechSynthesis.resume();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
   function speak(ch, text) {
     if (!('speechSynthesis' in window) || !isLetter(ch)) return;
     const say = (text && text.length) ? text : pronOf(ch);
     try {
+      wakeSpeech();
       speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(say);
+      u.volume = 1;
       u.lang = 'ja-JP'; u.rate = 1.0; u.pitch = 1.0;   // 単語単位＋等速で自然に
       if (jaVoice) u.voice = jaVoice;
       speechSynthesis.speak(u);
+      setTimeout(() => { try { speechSynthesis.resume(); } catch (e) {} }, 0);
+      lastSpeechAt = performance.now();
     } catch (e) {}
+  }
+  function requestSpeech(ch, text, type) {
+    queuedTouchSpeech = { ch, text };
+    wakeSpeech();
+    if (type !== 'touch') {
+      speak(ch, text);
+      queuedTouchSpeech = null;
+    }
+  }
+  function flushTouchSpeech() {
+    if (!queuedTouchSpeech) return;
+    const item = queuedTouchSpeech;
+    queuedTouchSpeech = null;
+    if (performance.now() - lastSpeechAt > 120) speak(item.ch, item.text);
   }
 
   // ―― kuromoji 形態素解析：任意の文章を文脈どおりに読む ――
@@ -522,6 +571,8 @@ try {
     return set;
   }
   canvas.addEventListener('pointerdown', e => {
+    leaveTextInput();
+    clearPageSelection();
     const p = localPos(e);
     pointer.type = e.pointerType || 'mouse';
     pointer.x = pointer.px = p.x; pointer.y = pointer.py = p.y;
@@ -539,13 +590,14 @@ try {
       for (const b of wb) { b.gdx = b.x - p.x; b.gdy = b.y - p.y; b.grabbed = true; }
       pointer.wordBeads = wb;
       pointer.grabTime = performance.now();
-      speak(best.ch, best.word || best.reading);   // 単語単位で自然に読み上げ
+      requestSpeech(best.ch, best.word || best.reading, pointer.type);   // 単語単位で自然に読み上げ
     }
     hideHint();
     canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
     e.preventDefault();
   });
   canvas.addEventListener('pointermove', e => {
+    clearPageSelection();
     const p = localPos(e);
     pointer.x = p.x; pointer.y = p.y; pointer.inside = true;
     e.preventDefault();
@@ -553,10 +605,16 @@ try {
   });
   function release() {
     if (pointer.wordBeads) for (const b of pointer.wordBeads) b.grabbed = false;
+    if (pointer.type === 'touch') flushTouchSpeech();
     pointer.down = false; pointer.grab = null; pointer.wordBeads = null;
   }
   window.addEventListener('pointerup', release);
   window.addEventListener('pointercancel', release);
+  canvas.addEventListener('touchstart', clearPageSelection, { passive: true });
+  canvas.addEventListener('touchend', clearPageSelection, { passive: true });
+  document.addEventListener('selectionchange', () => {
+    if (document.activeElement !== input) clearPageSelection();
+  });
   canvas.addEventListener('pointerleave', () => { if (!pointer.down) pointer.inside = false; });
 
   let hintHidden = false;
