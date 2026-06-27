@@ -267,7 +267,10 @@
   }
 
   // ―― kuromoji 形態素解析：任意の文章を文脈どおりに読む ――
-  let tokenizer = null;
+  let contextModel = null;
+  let dictWorker = null;
+  let dictReady = false;
+  let dictSeq = 0;
   let gChars = [], gReading = [], gWord = [], gWordRead = [], gWordId = [];
   const isKana = ch => { const c = ch.charCodeAt(0); return (c >= 0x3041 && c <= 0x309F) || (c >= 0x30A1 && c <= 0x30FF); };
   const toHira = s => kataToHira(s);
@@ -292,45 +295,21 @@
   // 入力テキスト → 文字 / 注音 / 単語の発音 / 単語の読み / 単語ID の配列（空白除外）
   function buildReadingArrays() {
     const raw = input.value;
-    let chars = [], reading = [], word = [], wread = [], wid = [], used = false;
-    if (tokenizer) {
-      let tokens = null;
-      try { tokens = tokenizer.tokenize(raw); } catch (e) { tokens = null; }
-      if (tokens) {
-        let id = 0;
-        for (const tk of tokens) {
-          const surf = Array.from(tk.surface_form);
-          const rdg = (tk.reading && tk.reading !== '*') ? toHira(tk.reading) : tk.surface_form;       // 表記読み（注音用）
-          const prn = (tk.pronunciation && tk.pronunciation !== '*') ? toHira(tk.pronunciation) : rdg;  // 発音（読み上げ用）
-          const per = fitReading(tk.surface_form, rdg);
-          for (let i = 0; i < surf.length; i++) {
-            chars.push(surf[i]);
-            reading.push(per[i] || (isLetter(surf[i]) ? surf[i] : ''));
-            word.push(isLetter(surf[i]) ? prn : '');
-            wread.push(isLetter(surf[i]) ? rdg : '');
-            wid.push(id);
-          }
-          id++;
-        }
-        used = true;
-      }
-    }
-    if (!used) {
-      // フォールバック：既定課文は文脈読み、それ以外は1字ごとの近似読み（1字＝1語）
-      chars = Array.from(raw).filter(ch => !/\s/.test(ch));
-      if (chars.length === 0) chars = ['　'];
-      const useDefault = chars.join('') === DEFAULT_TEXT && DEFAULT_READINGS.length === chars.length;
-      reading = useDefault ? DEFAULT_READINGS.slice() : chars.map(ch => readingOf(ch) || (isLetter(ch) ? ch : ''));
-      gChars = chars; gReading = reading; gWord = reading.slice(); gWordRead = reading.slice();
-      gWordId = chars.map((_, i) => i);
+    if (contextModel && contextModel.raw === raw) {
+      gChars = contextModel.chars;
+      gReading = contextModel.reading;
+      gWord = contextModel.word;
+      gWordRead = contextModel.wread;
+      gWordId = contextModel.wid;
       return;
     }
-    const fc = [], fr = [], fw = [], fwr = [], fid = [];
-    for (let i = 0; i < chars.length; i++) {
-      if (!/\s/.test(chars[i])) { fc.push(chars[i]); fr.push(reading[i]); fw.push(word[i]); fwr.push(wread[i]); fid.push(wid[i]); }
-    }
-    if (fc.length === 0) { fc.push('　'); fr.push(''); fw.push(''); fwr.push(''); fid.push(0); }
-    gChars = fc; gReading = fr; gWord = fw; gWordRead = fwr; gWordId = fid;
+    // フォールバック：既定課文は文脈読み、それ以外は1字ごとの近似読み（1字＝1語）
+    const chars = Array.from(raw).filter(ch => !/\s/.test(ch));
+    if (chars.length === 0) chars.push('　');
+    const useDefault = chars.join('') === DEFAULT_TEXT && DEFAULT_READINGS.length === chars.length;
+    const reading = useDefault ? DEFAULT_READINGS.slice() : chars.map(ch => readingOf(ch) || (isLetter(ch) ? ch : ''));
+    gChars = chars; gReading = reading; gWord = reading.slice(); gWordRead = reading.slice();
+    gWordId = chars.map((_, i) => i);
   }
 
   function setDictStatus(txt, done) {
@@ -343,59 +322,119 @@
     if (points.length) assignChars();
   }
 
-  function loadKuromojiScript() {
-    if (window.kuromoji) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js';
-      s.async = true;
-      s.onload = resolve;
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
+  function applyContextModel(raw, model) {
+    if (raw !== input.value) return;
+    contextModel = Object.assign({ raw }, model);
+    refreshTextModel();
   }
 
-  function buildTokenizer() {
-    return new Promise((resolve, reject) => {
-      if (!window.kuromoji) { reject(new Error('kuromoji unavailable')); return; }
-      try {
-        kuromoji.builder({ dicPath: 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/' })
-          .build((err, tk) => {
-            if (err || !tk) reject(err || new Error('dictionary unavailable'));
-            else resolve(tk);
-          });
-      } catch (e) {
-        reject(e);
-      }
-    });
+  function requestContextModel(raw) {
+    if (!dictReady || !dictWorker) return;
+    dictWorker.postMessage({ type: 'tokenize', raw, seq: ++dictSeq });
   }
 
-  // 辞書を背景で読み込み（失敗・オフラインでもフォールバックで動作）
+  function createDictionaryWorker() {
+    const workerCode = `
+let tokenizer = null;
+const isKana = ch => { const c = ch.charCodeAt(0); return (c >= 0x3041 && c <= 0x309F) || (c >= 0x30A1 && c <= 0x30FF); };
+const isLetter = ch => /[぀-ヿ一-鿿]/.test(ch);
+const kataToHira = s => s.replace(/[ァ-ヺ]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60));
+const toHira = s => kataToHira(s);
+function fitReading(surface, reading) {
+  const s = Array.from(surface), r = Array.from(reading), n = s.length;
+  const res = new Array(n).fill('');
+  if (n === 0) return res;
+  let lead = 0; while (lead < n && isKana(s[lead])) lead++;
+  let tail = 0; while (tail < n - lead && isKana(s[n - 1 - tail])) tail++;
+  let rStart = 0, rEnd = r.length;
+  for (let k = 0; k < lead; k++) { res[k] = s[k]; rStart++; }
+  for (let k = 0; k < tail; k++) { res[n - 1 - k] = s[n - 1 - k]; rEnd--; }
+  const mid = r.slice(rStart, Math.max(rStart, rEnd)).join('');
+  const midLen = (n - tail) - lead;
+  if (midLen === 1) res[lead] = mid;
+  else if (midLen > 1) for (let k = lead; k < n - tail; k++) res[k] = mid;
+  return res;
+}
+function buildModel(raw) {
+  const chars = [], reading = [], word = [], wread = [], wid = [];
+  const tokens = tokenizer.tokenize(raw);
+  let id = 0;
+  for (const tk of tokens) {
+    const surf = Array.from(tk.surface_form);
+    const rdg = (tk.reading && tk.reading !== '*') ? toHira(tk.reading) : tk.surface_form;
+    const prn = (tk.pronunciation && tk.pronunciation !== '*') ? toHira(tk.pronunciation) : rdg;
+    const per = fitReading(tk.surface_form, rdg);
+    for (let i = 0; i < surf.length; i++) {
+      if (/\\s/.test(surf[i])) continue;
+      chars.push(surf[i]);
+      reading.push(per[i] || (isLetter(surf[i]) ? surf[i] : ''));
+      word.push(isLetter(surf[i]) ? prn : '');
+      wread.push(isLetter(surf[i]) ? rdg : '');
+      wid.push(id);
+    }
+    id++;
+  }
+  if (chars.length === 0) { chars.push('　'); reading.push(''); word.push(''); wread.push(''); wid.push(0); }
+  return { chars, reading, word, wread, wid };
+}
+self.onmessage = e => {
+  const msg = e.data || {};
+  if (msg.type !== 'tokenize' || !tokenizer) return;
+  try {
+    self.postMessage({ type: 'model', raw: msg.raw, seq: msg.seq, model: buildModel(msg.raw) });
+  } catch (err) {
+    self.postMessage({ type: 'error', message: String(err && err.message || err) });
+  }
+};
+try {
+  importScripts('https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js');
+  kuromoji.builder({ dicPath: 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/' }).build((err, tk) => {
+    if (err || !tk) self.postMessage({ type: 'error', message: 'dictionary unavailable' });
+    else { tokenizer = tk; self.postMessage({ type: 'ready' }); }
+  });
+} catch (err) {
+  self.postMessage({ type: 'error', message: String(err && err.message || err) });
+}
+`;
+    return new Worker(URL.createObjectURL(new Blob([workerCode], { type: 'text/javascript' })));
+  }
+
+  // 辞書をWorkerで読み込み（主画面は常にフォールバックで動作）
   function initDictionary() {
     setDictStatus('辞書を読込中…');
-    let dictLoaded = false;
     const fallbackToApprox = txt => {
-      if (dictLoaded) return;
-      tokenizer = null;
+      if (dictReady) return;
       refreshTextModel();
       setDictStatus(txt, true);
     };
     const dictTimer = setTimeout(() => {
       fallbackToApprox('近似読み（辞書待機中）');
     }, 3000);
-    loadKuromojiScript()
-      .then(buildTokenizer)
-      .then(tk => {
-        clearTimeout(dictTimer);
-        tokenizer = tk;
-        dictLoaded = true;
-        refreshTextModel();
-        setDictStatus('辞書✓ 文脈で発音', true);
-      })
-      .catch(() => {
+    try {
+      dictWorker = createDictionaryWorker();
+      dictWorker.onmessage = e => {
+        const msg = e.data || {};
+        if (msg.type === 'ready') {
+          dictReady = true;
+          clearTimeout(dictTimer);
+          setDictStatus('辞書✓ 文脈で発音', true);
+          requestContextModel(input.value);
+        } else if (msg.type === 'model') {
+          applyContextModel(msg.raw, msg.model);
+          setDictStatus('辞書✓ 文脈で発音', true);
+        } else if (msg.type === 'error') {
+          clearTimeout(dictTimer);
+          fallbackToApprox('辞書読込失敗・近似読み');
+        }
+      };
+      dictWorker.onerror = () => {
         clearTimeout(dictTimer);
         fallbackToApprox('辞書読込失敗・近似読み');
-      });
+      };
+    } catch (e) {
+      clearTimeout(dictTimer);
+      fallbackToApprox('辞書読込失敗・近似読み');
+    }
   }
   initDictionary();
 
@@ -534,8 +573,10 @@
   input.addEventListener('input', () => {
     clearTimeout(typeTimer);
     typeTimer = setTimeout(() => {
+      contextModel = null;
       buildReadingArrays();
       assignChars();
+      requestContextModel(input.value);
       const cap = document.getElementById('capText');
       const t = input.value.replace(/\s+/g, '');
       if (cap) cap.textContent = t ? '「' + t.slice(0, 8) + (t.length > 8 ? '…' : '') + '」' : '「　」';
